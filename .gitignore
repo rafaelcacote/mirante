@@ -32,3 +32,6 @@ dist-ssr
 _buysystem_*
 _docs_*
 _token_site_*
+
+# Local markdown files
+docs/
