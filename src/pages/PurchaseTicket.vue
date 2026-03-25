@@ -19,8 +19,29 @@ const eventAddress = computed(
 )
 const eventLocation = computed(() => event.value?.location || 'Mirante Edileusa Loz')
 
-const quantity = ref(0)
 const maxTicketsPerPerson = 4
+const STORAGE_CUSTOMER_KEY = 'mirante_customer_profile'
+
+const selectedItemsFromQuery = computed(() => {
+  try {
+    const raw = route.query.items
+    if (!raw) return []
+    const parsed = JSON.parse(String(raw))
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+})
+const hasPreselectedItems = computed(() => selectedItemsFromQuery.value.length > 0)
+const initialQuantity = (() => {
+  const raw = Number(route.query.quantity || 0)
+  if (!Number.isFinite(raw) || raw < 0) return 0
+  return Math.min(maxTicketsPerPerson, Math.floor(raw))
+})()
+const quantity = ref(initialQuantity)
+if (hasPreselectedItems.value) {
+  quantity.value = selectedItemsFromQuery.value.reduce((sum, item) => sum + Number(item?.quantity || 0), 0)
+}
 
 const formData = reactive({
   firstName: '',
@@ -31,9 +52,52 @@ const formData = reactive({
   acceptTerms: false,
 })
 
-const price = computed(() => Number(route.query.price || event.value?.price || 0))
+const price = computed(() => {
+  if (hasPreselectedItems.value) {
+    return selectedItemsFromQuery.value.reduce((sum, item) => {
+      const itemPrice = Number(item?.price || 0)
+      const itemQuantity = Number(item?.quantity || 0)
+      return sum + itemPrice * itemQuantity
+    }, 0)
+  }
+  return Number(route.query.price || event.value?.price || 0)
+})
 const tax = 0.0
-const total = computed(() => (price.value + tax) * quantity.value)
+const total = computed(() => (hasPreselectedItems.value ? price.value : (price.value + tax) * quantity.value))
+const detailedSelectedItems = computed(() => {
+  if (!hasPreselectedItems.value) {
+    return [
+      {
+        id: route.params.sectorId || 'single',
+        name: 'Ingresso Gratuito',
+        time: selectedTime.value,
+        unitPrice: Number(route.query.price || event.value?.price || 0),
+        quantity: Number(quantity.value || 0),
+      },
+    ].filter((item) => item.quantity > 0)
+  }
+
+  return selectedItemsFromQuery.value
+    .map((item, index) => ({
+      id: item?.id || item?.ingresso_id || item?.setor_id || `item-${index}`,
+      name: item?.name || 'Ingresso',
+      time: item?.time || selectedTime.value,
+      unitPrice: Number(item?.price || 0),
+      quantity: Number(item?.quantity || 0),
+    }))
+    .filter((item) => item.quantity > 0)
+})
+
+const totalQuantityLabel = computed(() =>
+  `${quantity.value} ingresso${quantity.value > 1 ? 's' : ''}`
+)
+const summaryEventTitle = computed(() => event.value?.title || 'Visitação Mirante')
+const summaryTimeLabel = computed(() => {
+  const times = [...new Set(detailedSelectedItems.value.map((item) => String(item.time || '').trim()).filter(Boolean))]
+  if (times.length === 0) return selectedTime.value ? `${selectedTime.value}h` : 'Horário não informado'
+  if (times.length === 1) return `${times[0]}h`
+  return `${times.length} horários selecionados`
+})
 const isSubmitting = ref(false)
 const submitError = ref('')
 
@@ -52,10 +116,12 @@ const loadEvent = async () => {
 }
 
 const decrement = () => {
+  if (hasPreselectedItems.value) return
   quantity.value = Math.max(0, quantity.value - 1)
 }
 
 const increment = () => {
+  if (hasPreselectedItems.value) return
   if (quantity.value < maxTicketsPerPerson) {
     quantity.value = quantity.value + 1
   }
@@ -173,14 +239,18 @@ const handlePhoneKeyPress = (e) => {
 const firstInputRef = ref(null)
 
 // Foca no primeiro campo quando quantity > 0
-watch(quantity, async (newValue) => {
+watch(
+  quantity,
+  async (newValue) => {
   if (newValue > 0) {
     await nextTick()
     setTimeout(() => {
       firstInputRef.value?.focus()
     }, 300)
   }
-})
+  },
+  { immediate: true },
+)
 
 const submitForm = () => {
   if (quantity.value === 0) {
@@ -194,7 +264,78 @@ const submitForm = () => {
   }, 100)
 }
 
-const handleSubmit = (e) => {
+function pickCustomerId(payload) {
+  return (
+    payload?.cliente_id ||
+    payload?.clienteId ||
+    payload?.id ||
+    payload?.data?.cliente_id ||
+    payload?.data?.clienteId ||
+    payload?.data?.id ||
+    null
+  )
+}
+
+async function ensureCustomer() {
+  const cpf = String(formData.cpf || '').replace(/\D/g, '')
+  const email = String(formData.email || '').trim()
+  const nome = `${formData.firstName || ''} ${formData.lastName || ''}`.trim()
+
+  if (!cpf || !email || !nome) {
+    throw new Error('Preencha nome, email e CPF para continuar.')
+  }
+
+  const found = await apidogService.buscarClientes({ cpf, email })
+  if (Array.isArray(found) && found.length > 0) {
+    const existingId = pickCustomerId(found[0])
+    if (existingId) {
+      localStorage.setItem('mirante_last_customer', JSON.stringify({ email: formData.email, cpf: formData.cpf }))
+      localStorage.setItem(
+        STORAGE_CUSTOMER_KEY,
+        JSON.stringify({ clienteId: existingId, email: formData.email, cpf: formData.cpf, nome })
+      )
+      return existingId
+    }
+  }
+
+  const created = await apidogService.cadastrarCliente({
+    nome,
+    email,
+    cpf,
+    cep: '',
+    numero: '',
+    complemento: '',
+    data_nascimento: '',
+  })
+  const createdId = pickCustomerId(created)
+  if (!createdId) throw new Error('Cadastro criado, mas sem cliente_id no retorno.')
+
+  localStorage.setItem('mirante_last_customer', JSON.stringify({ email: formData.email, cpf: formData.cpf }))
+  localStorage.setItem(
+    STORAGE_CUSTOMER_KEY,
+    JSON.stringify({ clienteId: createdId, email: formData.email, cpf: formData.cpf, nome })
+  )
+  return createdId
+}
+
+function buildCheckoutItems() {
+  if (hasPreselectedItems.value) {
+    return selectedItemsFromQuery.value.map((item) => ({
+      setor_id: item?.setor_id || item?.id || route.params.sectorId,
+      ingresso_id: item?.ingresso_id || item?.id || null,
+      lote_id: item?.lote_id || null,
+      quantidade: Number(item?.quantity || 1),
+    }))
+  }
+  return [
+    {
+      setor_id: route.params.sectorId,
+      quantidade: Number(quantity.value || 1),
+    },
+  ]
+}
+
+const handleSubmit = async (e) => {
   e.preventDefault()
   submitError.value = ''
   if (!formData.acceptTerms) {
@@ -207,53 +348,38 @@ const handleSubmit = (e) => {
   }
 
   isSubmitting.value = true
-  const payload = {
-    eventoId: route.params.id,
-    sessionId: route.params.sectorId,
-    quantity: quantity.value,
-    customer: {
-      firstName: formData.firstName,
-      lastName: formData.lastName,
-      email: formData.email,
-      phone: formData.phone,
-      cpf: formData.cpf,
-    },
-  }
+  try {
+    const clienteId = await ensureCustomer()
+    const response = await apidogService.checkout({
+      clienteId,
+      eventoId: route.params.id,
+      itens: buildCheckoutItems(),
+      pagamento: { metodo: 'online', observacoes: '' },
+    })
 
-  apidogService
-    .createTicketReservation(payload)
-    .then((response) => {
-      localStorage.setItem(
-        'mirante_last_customer',
-        JSON.stringify({
-          email: formData.email,
-          cpf: formData.cpf,
-        })
-      )
-      // Redireciona para a página de confirmação com os dados da reserva
-      router.push({
-        name: 'compra-confirmada',
-        query: {
-          codigo: response?.codigo || response?.code || response?.id || '',
-          evento: event.value?.title || 'Visita ao Mirante Edileusa Lóz',
-          data: event.value?.date || '',
-          horario: selectedTime.value || route.query.time || '',
-          quantidade: String(quantity.value),
-          email: formData.email,
-        },
-      })
+    router.push({
+      name: 'compra-confirmada',
+      query: {
+        codigo: response?.codigo || response?.code || response?.id || response?.data?.id || '',
+        evento: event.value?.title || 'Visita ao Mirante Edileusa Lóz',
+        data: event.value?.date || '',
+        horario: selectedTime.value || route.query.time || '',
+        quantidade: String(quantity.value),
+        email: formData.email,
+      },
     })
-    .catch((err) => {
-      submitError.value = err?.message || 'Nao foi possivel concluir a reserva agora.'
-    })
-    .finally(() => {
-      isSubmitting.value = false
-    })
+  } catch (err) {
+    submitError.value = err?.message || 'Nao foi possivel concluir a reserva agora.'
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
-// Imagem do evento (pode ser substituída por uma imagem real)
-const eventImage =
-  'https://private-us-east-1.manuscdn.com/sessionFile/ct5iih13rREJzVL8BUQxZf/sandbox/YN3cvVrDfKJXUeY7ppiGs4-img-2_1770038910000_na1fn_aGVyby1taXJhbnRlLXN1bnNldA.png?x-oss-process=image/resize,w_1920,h_1920/format,webp/quality,q_80&Expires=1798761600&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvY3Q1aWloMTNyUkVKelZMOEJVUXhaZi9zYW5kYm94L1lOM2N2VnJEZktKWFVlWTdwcGlHczQtaW1nLTJfMTc3MDAzODkxMDAwMF9uYTFmbl9hR1Z5YnkxdGFYSmhiblJsTFhOMWJuTmxkQS5wbmc~eC1vc3MtcHJvY2Vzcz1pbWFnZS9yZXNpemUsd18xOTIwLGhfMTkyMC9mb3JtYXQsd2VicC9xdWFsaXR5LHFfODAiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3OTg3NjE2MDB9fX1dfQ__&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=FfdXi1NM8V2RSw2vOGUPRNYRinUox7uu2YIZ8dtGIlg43n0hqtxshqyGSKCAoTWwPu6QmWmtuk8hiZNkN6fytcz~j72m8U0~6tH8agUEOI5IZt8qGa-DUR6PMOGOddOOlGoCPRdoy1u2xur2~sXNdP0-kVoVvZccAvl2xygDDHi8BVwJgqKdLLeWrShDOvGUJkGuBXP0yrChM5t3-x35WrYJl-ESvEqvKozPzwsspu8zep2v4YpMqP0ZJ-8vxyGPSBgdrg33MxflZU3GDk1g4KwB2objZx51Jmhva7tmuxEUef75nedG-4WkJPZB0OvvySK9tF9yhkosqX~B6mdXlQ__'
+const eventImage = computed(
+  () =>
+    event.value?.image ||
+    'https://private-us-east-1.manuscdn.com/sessionFile/ct5iih13rREJzVL8BUQxZf/sandbox/YN3cvVrDfKJXUeY7ppiGs4-img-2_1770038910000_na1fn_aGVyby1taXJhbnRlLXN1bnNldA.png?x-oss-process=image/resize,w_1920,h_1920/format,webp/quality,q_80'
+)
 
 onMounted(loadEvent)
 </script>
@@ -266,8 +392,11 @@ onMounted(loadEvent)
       <!-- Back Button -->
       <div class="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div class="container mx-auto px-4 py-3">
-          <button class="flex items-center gap-2 text-[#0F3460] hover:text-[#D4AF37] transition-colors" @click="goBack">
-            <ChevronLeft class="w-5 h-5" />
+          <button
+            class="group inline-flex items-center gap-2 rounded-md border border-[#0F3460]/20 bg-white px-3 py-2 text-sm md:text-base font-medium text-[#0F3460] shadow-sm transition-all duration-200 hover:-translate-x-0.5 hover:border-[#0F3460]/40 hover:bg-[#0F3460]/5 hover:shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F3460] focus-visible:ring-offset-2"
+            @click="goBack"
+          >
+            <ChevronLeft class="h-5 w-5 transition-transform duration-200 group-hover:-translate-x-0.5" />
             <span class="text-sm md:text-base">Voltar</span>
           </button>
         </div>
@@ -283,7 +412,7 @@ onMounted(loadEvent)
 
             <!-- Event Information -->
             <div class="bg-white px-4 py-6 border-b border-gray-200 rounded-lg mb-4">
-              <h1 class="text-2xl md:text-3xl font-bold text-[#0F3460] mb-4">{{ event?.title || 'Visita ao Mirante' }}</h1>
+              <h1 class="text-2xl md:text-3xl font-bold text-[#0F3460] mb-4">{{ event?.title }}</h1>
 
               <div class="space-y-3">
                 <div class="flex items-start gap-3">
@@ -307,24 +436,23 @@ onMounted(loadEvent)
 
             <!-- Ticket Selection Section -->
             <div class="bg-white px-4 py-6 rounded-lg mb-4">
-          <h2 class="text-sm font-semibold text-gray-600 mb-4">Escolha uma opção</h2>
 
           <!-- Ticket Card -->
           <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white">
             <div class="flex items-start justify-between mb-3">
               <div class="flex-1">
-                <h3 class="text-lg font-bold text-[#0F3460] mb-1">Ingresso Gratuito</h3>
-                <p class="text-sm text-gray-600 mb-2">Visitação ao Mirante Edileusa Lóz</p>
+                <h3 class="text-lg font-bold text-[#0F3460] mb-1">{{ hasPreselectedItems ? 'Ingressos Selecionados' : 'Ingresso Gratuito' }}</h3>
+                <p class="text-sm text-gray-600 mb-2">{{ event?.title }}</p>
                 <div class="flex items-center gap-2 mb-2">
                   <span class="text-lg font-bold text-[#0F3460]">R$ {{ price.toFixed(2) }}</span>
-                  <span class="text-sm text-gray-500">(+ R$ {{ Number(tax).toFixed(2) }} taxa)</span>
+                  <span v-if="!hasPreselectedItems" class="text-sm text-gray-500">(+ R$ {{ Number(tax).toFixed(2) }} taxa)</span>
                 </div>
                 <p class="text-xs text-gray-500">Vendas até {{ eventDate }}</p>
               </div>
             </div>
 
             <!-- Quantity Selector -->
-            <div class="flex items-center gap-3 mt-4">
+            <div v-if="!hasPreselectedItems" class="flex items-center gap-3 mt-4">
               <button
                 :disabled="quantity === 0"
                 class="w-10 h-10 rounded-lg border-2 border-gray-300 bg-white text-gray-600 font-bold text-xl flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed active:bg-gray-100 transition-colors"
@@ -349,21 +477,44 @@ onMounted(loadEvent)
               </button>
               <span class="text-sm text-gray-600 ml-2">Máximo {{ maxTicketsPerPerson }} por pessoa</span>
             </div>
+            <p v-else class="text-sm text-gray-600 mt-3">
+              Quantidade total selecionada: <strong>{{ quantity }}</strong>
+            </p>
+          </div>
+
+          <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
+            <h4 class="text-sm font-semibold text-[#0F3460] mb-3">Itens selecionados</h4>
+            <div v-if="detailedSelectedItems.length === 0" class="text-sm text-gray-600">
+              Nenhum item selecionado.
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="item in detailedSelectedItems"
+                :key="item.id"
+                class="flex items-start justify-between gap-3 text-sm"
+              >
+                <div>
+                  <p class="font-semibold text-[#0F3460]">{{ item.name }}</p>
+                  <p class="text-gray-600">{{ item.time }}h • {{ item.quantity }}x R$ {{ item.unitPrice.toFixed(2) }}</p>
+                </div>
+                <p class="font-semibold text-[#0F3460]">R$ {{ (item.unitPrice * item.quantity).toFixed(2) }}</p>
+              </div>
+            </div>
           </div>
 
           <!-- Tax Information -->
-          <div class="flex items-center gap-2 text-sm text-gray-600 mb-6">
+          <!-- <div class="flex items-center gap-2 text-sm text-gray-600 mb-6">
             <Info class="w-4 h-4" />
             <a href="#" class="text-[#0F3460] hover:underline">Entenda nossa taxa</a>
-          </div>
+          </div> -->
 
           <!-- Coupon Section (opcional) -->
-          <div class="border border-gray-200 rounded-lg p-4 mb-6 bg-gray-50">
+          <!-- <div class="border border-gray-200 rounded-lg p-4 mb-6 bg-gray-50">
             <div class="flex items-center gap-2 text-gray-600">
               <Ticket class="w-5 h-5" />
               <span class="text-sm">Inserir cupom de desconto</span>
             </div>
-          </div>
+          </div> -->
         </div>
 
             <!-- Personal Information Form (only show if quantity > 0) -->
@@ -481,7 +632,7 @@ onMounted(loadEvent)
               <div class="space-y-4 mb-6 pb-6 border-b border-white/20">
                 <div>
                   <p class="text-sm text-white/80 mb-1">Evento</p>
-                  <p class="font-semibold text-sm">Visitação Mirante</p>
+                  <p class="font-semibold text-sm">{{ summaryEventTitle }}</p>
                 </div>
                 <div>
                   <p class="text-sm text-white/80 mb-1">Data</p>
@@ -489,18 +640,22 @@ onMounted(loadEvent)
                 </div>
                 <div>
                   <p class="text-sm text-white/80 mb-1">Horário</p>
-                  <p class="font-semibold text-sm">{{ selectedTime }}h</p>
+                  <p class="font-semibold text-sm">{{ summaryTimeLabel }}</p>
                 </div>
               </div>
 
               <div class="space-y-3 mb-6">
-                <div class="flex justify-between text-sm">
-                  <span>Ingresso Gratuito</span>
-                  <span>R$ {{ price.toFixed(2) }}</span>
+                <div
+                  v-for="item in detailedSelectedItems"
+                  :key="`sidebar-${item.id}`"
+                  class="flex justify-between text-sm"
+                >
+                  <span>{{ item.name }} ({{ item.quantity }}x)</span>
+                  <span>R$ {{ (item.unitPrice * item.quantity).toFixed(2) }}</span>
                 </div>
                 <div class="flex justify-between text-xs text-white/80">
-                  <span>Quantidade</span>
-                  <span>{{ quantity }}x</span>
+                  <span>Quantidade total</span>
+                  <span>{{ totalQuantityLabel }}</span>
                 </div>
               </div>
 
@@ -539,7 +694,7 @@ onMounted(loadEvent)
           <p class="text-lg font-bold text-[#0F3460]">R$ {{ total.toFixed(2) }}</p>
         </div>
         <div v-if="quantity > 0" class="text-right">
-          <p class="text-xs text-gray-600">{{ quantity }} ingresso{{ quantity > 1 ? 's' : '' }}</p>
+          <p class="text-xs text-gray-600">{{ totalQuantityLabel }}</p>
         </div>
       </div>
       <Button

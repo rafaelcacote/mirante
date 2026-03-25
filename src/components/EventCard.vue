@@ -28,7 +28,14 @@ const handleBuy = () => {
 </script>
 
 <template>
-  <div class="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:scale-105">
+  <div
+    role="link"
+    tabindex="0"
+    class="bg-white rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:scale-105 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#0F3460]/30"
+    @click="handleBuy"
+    @keydown.enter.prevent="handleBuy"
+    @keydown.space.prevent="handleBuy"
+  >
     <div class="relative h-48 overflow-hidden">
       <img :src="image" :alt="title" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" />
       <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
@@ -77,7 +84,10 @@ const handleBuy = () => {
           <p class="text-xs text-gray-600 mb-1">A partir de</p>
           <p class="text-2xl font-bold text-[#0F3460]">R$ {{ price.toFixed(2) }}</p>
         </div>
-        <Button class="bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold flex items-center gap-2" @click="handleBuy">
+        <Button
+          class="bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold flex items-center gap-2"
+          @click.stop="handleBuy"
+        >
           Comprar
           <ArrowRight class="w-4 h-4" />
         </Button>

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Calendar, ChevronLeft, Clock, MapPin, Users } from 'lucide-vue-next'
 
@@ -16,15 +16,45 @@ const tickets = ref([])
 const loading = ref(true)
 const error = ref(null)
 const ticketsError = ref('')
-const quantity = ref(1)
+const ticketQuantities = ref({})
 
-const price = computed(() => {
-  const eventPrice = Number(event.value?.price || 0)
-  if (eventPrice > 0) return eventPrice
-  const firstTicketWithPrice = tickets.value.find((ticket) => Number(ticket?.price || 0) > 0)
-  return Number(firstTicketWithPrice?.price || 0)
+const allAvailableAreZero = computed(() => {
+  if (tickets.value.length === 0) return false
+  return tickets.value.every((t) => Number(t?.available || 0) <= 0)
 })
-const total = computed(() => price.value * quantity.value)
+
+const ticketsForSelect = computed(() => {
+  // Se a API não informa disponibilidade (available vem tudo como 0),
+  // ainda assim exibimos as opções para não travar a UI.
+  if (allAvailableAreZero.value) return tickets.value
+  return tickets.value.filter((t) => Number(t?.available || 0) > 0)
+})
+
+const isTicketSelectable = (ticket) => {
+  if (!ticket?.id) return false
+  if (allAvailableAreZero.value) return true
+  return Number(ticket.available || 0) > 0
+}
+
+const selectedItems = computed(() =>
+  ticketsForSelect.value
+    .map((ticket) => ({
+      ticket,
+      quantity: Number(ticketQuantities.value[String(ticket.id)] || 0),
+    }))
+    .filter(({ ticket, quantity }) => isTicketSelectable(ticket) && quantity > 0)
+)
+
+const totalQuantity = computed(() =>
+  selectedItems.value.reduce((sum, item) => sum + item.quantity, 0)
+)
+
+const total = computed(() =>
+  selectedItems.value.reduce((sum, item) => {
+    const ticketPrice = Number(item.ticket?.price || 0)
+    return sum + ticketPrice * item.quantity
+  }, 0)
+)
 
 async function loadEvent() {
   loading.value = true
@@ -40,6 +70,11 @@ async function loadEvent() {
     ])
     event.value = eventDetail
     tickets.value = eventTickets
+    const nextQuantities = {}
+    for (const ticket of eventTickets) {
+      nextQuantities[String(ticket.id)] = 0
+    }
+    ticketQuantities.value = nextQuantities
   } catch (err) {
     error.value = err.message
   } finally {
@@ -51,19 +86,70 @@ onMounted(loadEvent)
 
 const goBack = () => router.back()
 const goToCheckout = () => {
-  if (!event.value?.id) return
-  router.push({ name: 'select-sector', params: { id: event.value.id } })
-}
-const goToTicketPurchase = (ticket) => {
-  if (!event.value?.id || !ticket?.id) return
+  const eventId = event.value?.id
+  if (!eventId) return
+
+  if (totalQuantity.value <= 0) {
+    alert('Selecione ao menos 1 ingresso para continuar.')
+    return
+  }
+
+  const checkoutItems = selectedItems.value.map(({ ticket, quantity }) => ({
+    id: ticket.id,
+    name: ticket.name,
+    time: ticket.time || event.value.time,
+    price: Number(ticket.price || 0),
+    quantity,
+    setor_id: ticket?.raw?.setor_id || ticket?.raw?.horario_id || ticket.id,
+    ingresso_id: ticket?.raw?.ingresso_id || ticket.id,
+    lote_id: ticket?.raw?.lote_id || ticket?.raw?.lote?.id || null,
+  }))
+
+  const defaultSectorId = checkoutItems[0]?.setor_id || checkoutItems[0]?.id
+  if (!defaultSectorId) return
+
   router.push({
     name: 'purchase-ticket',
-    params: { id: event.value.id, sectorId: ticket.id },
-    query: { time: ticket.time || event.value.time, price: String(ticket.price || 0) },
+    params: { id: eventId, sectorId: defaultSectorId },
+    query: {
+      items: JSON.stringify(checkoutItems),
+      quantity: String(totalQuantity.value),
+      total: String(total.value),
+      time: checkoutItems[0]?.time || event.value.time,
+    },
   })
 }
-const decrement = () => (quantity.value = Math.max(1, quantity.value - 1))
-const increment = () => (quantity.value += 1)
+
+const quantityFor = (ticket) => Number(ticketQuantities.value[String(ticket.id)] || 0)
+
+const maxQuantityForTicket = (ticket) => {
+  const available = Number(ticket?.available || 0)
+  if (!Number.isFinite(available) || available <= 0) return 4
+  return Math.min(4, available)
+}
+
+const decrementTicket = (ticket) => {
+  const key = String(ticket.id)
+  const current = Number(ticketQuantities.value[key] || 0)
+  ticketQuantities.value[key] = Math.max(0, current - 1)
+}
+
+const incrementTicket = (ticket) => {
+  const key = String(ticket.id)
+  const current = Number(ticketQuantities.value[key] || 0)
+  const max = maxQuantityForTicket(ticket)
+  ticketQuantities.value[key] = Math.min(max, current + 1)
+}
+
+watch(tickets, (list) => {
+  const next = {}
+  for (const ticket of list || []) {
+    const key = String(ticket.id)
+    const max = maxQuantityForTicket(ticket)
+    next[key] = Math.min(Number(ticketQuantities.value[key] || 0), max)
+  }
+  ticketQuantities.value = next
+})
 </script>
 
 <template>
@@ -140,39 +226,6 @@ const increment = () => (quantity.value += 1)
                 <p class="text-gray-600 mb-4">{{ event.descricao }}</p>
               </div>
             </div>
-
-            <div class="bg-white rounded-2xl p-8 shadow-lg mb-8">
-              <h2 class="subheading text-[#0F3460] mb-4">Ingressos Disponiveis</h2>
-              <p v-if="ticketsError" class="text-sm text-red-600 mb-3">{{ ticketsError }}</p>
-              <div v-if="tickets.length === 0" class="text-gray-600 text-sm">
-                Nenhum ingresso listado para este evento no momento.
-              </div>
-              <div v-else class="space-y-3">
-                <div
-                  v-for="ticket in tickets"
-                  :key="ticket.id"
-                  class="border border-gray-200 rounded-xl p-4 flex items-center justify-between gap-4"
-                >
-                  <div>
-                    <p class="font-semibold text-[#0F3460]">{{ ticket.name }}</p>
-                    <p class="text-sm text-gray-600">
-                      {{ ticket.time || event.time }} • {{ ticket.available }} disponiveis
-                    </p>
-                    <p v-if="ticket.description" class="text-xs text-gray-500 mt-1">{{ ticket.description }}</p>
-                  </div>
-                  <div class="text-right">
-                    <p class="font-bold text-[#0F3460] mb-2">R$ {{ Number(ticket.price || 0).toFixed(2) }}</p>
-                    <Button
-                      :disabled="!ticket.isAvailable"
-                      class="bg-[#0F3460] text-white disabled:opacity-50"
-                      @click="goToTicketPurchase(ticket)"
-                    >
-                      {{ ticket.isAvailable ? 'Selecionar' : 'Esgotado' }}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div class="lg:col-span-1">
@@ -186,37 +239,52 @@ const increment = () => (quantity.value += 1)
                 </div>
 
                 <div>
-                  <label class="block text-sm font-semibold mb-3">Quantidade de Ingressos</label>
-                  <div class="flex items-center gap-3">
-                    <button
-                      class="w-10 h-10 rounded-lg bg-white/20 hover:bg-white/30 transition-colors flex items-center justify-center"
-                      @click="decrement"
+                  <label class="block text-sm font-semibold mb-3">Ingressos disponíveis</label>
+                  <div class="space-y-3 max-h-80 overflow-auto pr-1">
+                    <div
+                      v-for="ticket in ticketsForSelect"
+                      :key="ticket.id"
+                      class="rounded-lg border border-white/20 bg-white/10 p-3"
                     >
-                      −
-                    </button>
-                    <input
-                      v-model.number="quantity"
-                      type="number"
-                      min="1"
-                      class="flex-1 px-4 py-2 rounded-lg bg-white/20 border border-white/30 text-white text-center focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
-                    />
-                    <button
-                      class="w-10 h-10 rounded-lg bg-white/20 hover:bg-white/30 transition-colors flex items-center justify-center"
-                      @click="increment"
-                    >
-                      +
-                    </button>
+                      <p class="font-semibold">{{ ticket.name }}</p>
+                      <p class="text-xs text-white/80 mb-3">
+                        {{ ticket.time || event.time }}h • {{ ticket.available }} disp. • R$ {{ Number(ticket.price || 0).toFixed(2) }}
+                      </p>
+                      <div class="flex items-center gap-3">
+                        <button
+                          class="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 transition-colors flex items-center justify-center"
+                          @click="decrementTicket(ticket)"
+                        >
+                          −
+                        </button>
+                        <input
+                          :value="quantityFor(ticket)"
+                          readonly
+                          class="w-14 px-2 py-1 rounded-lg bg-white/20 border border-white/30 text-white text-center"
+                        />
+                        <button
+                          class="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 transition-colors flex items-center justify-center"
+                          @click="incrementTicket(ticket)"
+                        >
+                          +
+                        </button>
+                        <span class="text-xs text-white/80">máx. {{ maxQuantityForTicket(ticket) }}</span>
+                      </div>
+                    </div>
                   </div>
+
+                  <p v-if="ticketsError" class="text-sm text-red-200 mt-2">
+                    {{ ticketsError }}
+                  </p>
+                  <p v-else-if="!loading && ticketsForSelect.length === 0" class="text-sm text-white/70 mt-2">
+                    Nenhum ingresso disponível para este evento no momento.
+                  </p>
                 </div>
 
                 <div class="border-t border-white/20 pt-6">
-                  <div class="flex justify-between mb-2">
-                    <span>Preço unitário</span>
-                    <span>R$ {{ Number(price).toFixed(2) }}</span>
-                  </div>
                   <div class="flex justify-between mb-4 text-sm text-white/80">
                     <span>Quantidade</span>
-                    <span>{{ quantity }}x</span>
+                    <span>{{ totalQuantity }} ingresso{{ totalQuantity > 1 ? 's' : '' }}</span>
                   </div>
                   <div class="flex justify-between text-lg font-bold border-t border-white/20 pt-4">
                     <span>Total</span>
@@ -224,8 +292,12 @@ const increment = () => (quantity.value += 1)
                   </div>
                 </div>
 
-                <Button class="w-full bg-[#D4AF37] text-[#0F3460] hover:bg-white font-bold text-base py-3" @click="goToCheckout">
-                  Escolher Horario
+                <Button
+                  class="w-full bg-[#D4AF37] text-[#0F3460] hover:bg-white font-bold text-base py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="totalQuantity <= 0"
+                  @click="goToCheckout"
+                >
+                  Continuar
                 </Button>
 
                 <p class="text-xs text-white/70 text-center">Você receberá confirmação por email após a compra</p>
