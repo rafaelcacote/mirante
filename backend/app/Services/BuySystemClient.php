@@ -12,6 +12,13 @@ class BuySystemClient
     private const CACHE_KEY = 'buysystem.token_state';
     private const LOCK_KEY = 'buysystem.token.lock';
     private const RENEW_WINDOW_SECONDS = 120;
+    private const INIT_ENDPOINT = 'https://api.buysystem.com.br/scripts/gerar-token-init';
+
+    private function baseUrlHasV2Prefix(): bool
+    {
+        $baseUrl = rtrim((string) config('buysystem.base_url', ''), '/');
+        return str_ends_with($baseUrl, '/v2');
+    }
 
     public function get(string $endpoint, ?string $operatorSession = null): array
     {
@@ -151,40 +158,85 @@ class BuySystemClient
 
     private function generateInitialToken(): array
     {
-        $unitToken = trim((string) config('buysystem.unit_token'));
-        if ($unitToken === '') {
-            throw new RuntimeException('BUYSYSTEM_UNIT_TOKEN não configurado no .env');
+        $tokenType = trim((string) config('buysystem.token_type', 'site'));
+        $pdvId = (int) config('buysystem.pdv_id', 0);
+        $userId = (int) config('buysystem.init_user_id', 0);
+        $minutes = (int) config('buysystem.init_minutes', 120);
+
+        if ($tokenType === '' || $pdvId <= 0 || $userId <= 0 || $minutes <= 0) {
+            throw new RuntimeException('Configuração inválida para token init. Ajuste BUYSYSTEM_TOKEN_TYPE, BUYSYSTEM_PDV_ID, BUYSYSTEM_INIT_USER_ID e BUYSYSTEM_INIT_MINUTES no .env');
         }
 
         try {
-            // Novo fluxo (V2) — o seu Postman mostra:
-            // POST /v2/auth/ativar (Authorization: Bearer <bs_init>)
-            // e a resposta traz expires_in_hours (ou expires_at).
-            //
-            // Para manter compatibilidade, tentamos antes /auth/ativar e caímos para
-            // /auth/token_site quando necessário.
-            try {
-                $response = $this->rawRequest('POST', '/auth/ativar', [], $unitToken);
-            } catch (RuntimeException $authError) {
-                // Fallback legado: /auth/token_site
-                $response = $this->rawRequest('POST', '/auth/token_site', [
+            $bootstrapResponse = Http::timeout(30)
+                ->acceptJson()
+                ->post(self::INIT_ENDPOINT, [
+                    'bs_tipo' => $tokenType,
+                    'pdv_id' => $pdvId,
+                    'user_id' => $userId,
+                    'minutes' => $minutes,
+                ]);
+
+            if (! $bootstrapResponse->successful()) {
+                throw new RuntimeException('Falha ao gerar bootstrap_token: HTTP '.$bootstrapResponse->status());
+            }
+
+            $bootstrapJson = $this->parseResponseJson($bootstrapResponse);
+            $bootstrapData = $bootstrapJson['data'] ?? [];
+            if (! is_array($bootstrapData)) {
+                $bootstrapData = [];
+            }
+
+            $bootstrapToken = (string) ($bootstrapData['bootstrap_token'] ?? '');
+            if ($bootstrapToken === '') {
+                throw new RuntimeException('Resposta sem bootstrap_token ao chamar /scripts/gerar-token-init');
+            }
+
+            $hasV2Prefix = $this->baseUrlHasV2Prefix();
+            $activationCandidates = $hasV2Prefix
+                ? ['/auth/ativar']
+                : ['/auth/ativar', '/v2/auth/ativar'];
+
+            $lastError = null;
+            foreach ($activationCandidates as $activationEndpoint) {
+                try {
+                    $response = $this->rawRequest('POST', $activationEndpoint, [], $bootstrapToken);
+                    $lastError = null;
+                    break;
+                } catch (RuntimeException $e) {
+                    $lastError = $e;
+                }
+            }
+
+            if (! isset($response) || ! is_array($response)) {
+                throw $lastError ?? new RuntimeException('Falha ao ativar unidade (auth/ativar)');
+            }
+
+            $data = $this->extractAuthData($this->parseResponseJson($response));
+            $data['bootstrap_token'] = $bootstrapToken;
+            $data['bootstrap_expires_in_minutes'] = (int) ($bootstrapData['expires_in_minutes'] ?? $minutes);
+
+            // Fallback legado em ambiente antigo: gera access/refresh com token UNIT.
+            if (empty($data['refresh_token'])) {
+                $legacyUnitToken = trim((string) config('buysystem.unit_token'));
+                if ($legacyUnitToken !== '') {
+                    $legacyResponse = $this->rawRequest('POST', '/auth/token_site', [
                     'tipo' => (string) config('buysystem.token_type', 'site'),
                     'access_minutes' => (int) config('buysystem.access_minutes', 60),
                     'refresh_days' => (int) config('buysystem.refresh_days', 30),
                     'descricao' => (string) config('buysystem.token_description', 'WEB ADMIN'),
-                ], $unitToken);
+                    ], $legacyUnitToken);
+                    $legacyData = $this->extractAuthData($this->parseResponseJson($legacyResponse));
+                    $data['refresh_token'] = (string) ($legacyData['refresh_token'] ?? '');
+                }
             }
 
-            $data = $this->extractAuthData($this->parseResponseJson($response));
             return $this->storeTokenData($data);
         } catch (RuntimeException $e) {
-            // Se o UNIT token estiver inativo/expirado, lança erro mais claro
             if ($this->isAuthErrorMessage($e->getMessage())) {
                 throw new RuntimeException(
-                    'BUYSYSTEM_UNIT_TOKEN expirado ou inválido. '.
-                    'O token UNIT expira em 10 minutos. '.
-                    'Renove executando: Invoke-WebRequest -Method POST -Uri "https://api.buysystem.com.br/scripts/gerar_token_admin.php" '.
-                    'e atualize o BUYSYSTEM_UNIT_TOKEN no .env. Erro original: '.$e->getMessage()
+                    'Não foi possível renovar o token da BuySystem pelo fluxo init/ativar. '.
+                    'Verifique credenciais e payload de /scripts/gerar-token-init. Erro original: '.$e->getMessage()
                 );
             }
             throw $e;
@@ -207,29 +259,52 @@ class BuySystemClient
         ]));
 
         $lastError = null;
+        $hasV2Prefix = $this->baseUrlHasV2Prefix();
+        $refreshEndpoints = $hasV2Prefix
+            ? ['/auth/refresh']
+            : ['/v2/auth/refresh', '/auth/refresh'];
         foreach ($authCandidates as $candidate) {
-            try {
-                $response = $this->rawRequest('POST', '/auth/refresh', [
-                    'refresh_token' => $refreshToken,
-                ], $candidate);
+            foreach ($refreshEndpoints as $refreshEndpoint) {
+                try {
+                    $response = $this->rawRequest('POST', $refreshEndpoint, [
+                        'refresh_token' => $refreshToken,
+                    ], $candidate);
 
-                $data = $this->extractAuthData($this->parseResponseJson($response));
-                return $this->storeTokenData($data);
-            } catch (RuntimeException $error) {
-                $lastError = $error;
-                if (! $this->isAuthErrorMessage($error->getMessage())) {
-                    throw $error;
+                    $data = $this->extractAuthData($this->parseResponseJson($response));
+                    if (empty($data['refresh_token'])) {
+                        // Algumas respostas de refresh podem não retornar refresh_token.
+                        // Mantemos o refresh token anterior para manter o ciclo consistente.
+                        $data['refresh_token'] = $refreshToken;
+                    }
+                    return $this->storeTokenData($data);
+                } catch (RuntimeException $error) {
+                    $lastError = $error;
+                    if (! $this->isAuthErrorMessage($error->getMessage())) {
+                        throw $error;
+                    }
                 }
             }
         }
 
         try {
-            $response = $this->rawRequest('POST', '/auth/refresh', [
-                'refresh_token' => $refreshToken,
-            ]);
-            $data = $this->extractAuthData($this->parseResponseJson($response));
-            return $this->storeTokenData($data);
+            foreach ($refreshEndpoints as $refreshEndpoint) {
+                $response = $this->rawRequest('POST', $refreshEndpoint, [
+                    'refresh_token' => $refreshToken,
+                ]);
+                $data = $this->extractAuthData($this->parseResponseJson($response));
+                if (empty($data['refresh_token'])) {
+                    $data['refresh_token'] = $refreshToken;
+                }
+                return $this->storeTokenData($data);
+            }
+
+            throw new RuntimeException('Nenhum endpoint de refresh respondeu com sucesso');
         } catch (RuntimeException $error) {
+            if ($this->isAuthErrorMessage($error->getMessage())) {
+                Cache::forget(self::CACHE_KEY);
+                return $this->generateInitialToken();
+            }
+
             throw $lastError ?? $error;
         }
     }
@@ -390,6 +465,8 @@ class BuySystemClient
             'refresh_token' => $refreshToken,
             'expires_at' => $expiresAt,
             'refresh_expires_at' => time() + ($refreshDays * 24 * 60 * 60),
+            'bootstrap_token' => (string) ($data['bootstrap_token'] ?? ''),
+            'bootstrap_expires_in_minutes' => (int) ($data['bootstrap_expires_in_minutes'] ?? 0),
         ];
 
         Cache::forever(self::CACHE_KEY, $state);

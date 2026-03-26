@@ -1,34 +1,31 @@
-# 🔑 Gerenciamento do BUYSYSTEM_UNIT_TOKEN
+# Gerenciamento de Tokens BuySystem
 
-O `BUYSYSTEM_UNIT_TOKEN` é um token temporário que expira em **10 minutos**. Ele é usado para gerar tokens de acesso (`access_token`) que duram mais tempo (60 minutos) e tokens de refresh (30 dias).
+Fluxo atual recomendado:
+- `POST https://api.buysystem.com.br/scripts/gerar-token-init` -> retorna `bootstrap_token`
+- `POST /v2/auth/ativar` -> retorna `access_token` (e pode retornar `refresh_token`)
+- `POST /v2/auth/refresh` -> renova o `access_token` usando `refresh_token`
 
-## ⚠️ Problema Comum
+## Problema comum
 
-Quando o UNIT token expira, você verá erros como:
+Quando o token expira, você verá erros como:
 - `Token inativo`
-- `BUYSYSTEM_UNIT_TOKEN expirado ou inválido`
 - `Erro interno no proxy BuySystem`
 
-## ✅ Soluções
+## Soluções
 
-### 1. Renovação Manual (Rápida)
+### 1. Configuração base no `.env`
 
-Execute no PowerShell:
-```powershell
-Invoke-WebRequest -Method POST -Uri "https://api.buysystem.com.br/scripts/gerar_token_admin.php"
-```
-
-Copie o token retornado e atualize no `.env`:
 ```env
-BUYSYSTEM_UNIT_TOKEN=seu_novo_token_aqui
+BUYSYSTEM_BASE_URL=https://api.buysystem.com.br/v2
+BUYSYSTEM_TOKEN_TYPE=site
+BUYSYSTEM_PDV_ID=1
+BUYSYSTEM_INIT_USER_ID=1
+BUYSYSTEM_INIT_MINUTES=120
+BUYSYSTEM_ACCESS_MINUTES=120
+BUYSYSTEM_REFRESH_DAYS=30
 ```
 
-Reinicie o servidor Laravel:
-```bash
-php artisan serve --host=127.0.0.1 --port=8000
-```
-
-### 2. Renovação via Comando Artisan (Recomendado)
+### 2. Validação via comando Artisan (recomendado)
 
 O Laravel tem um comando que faz tudo automaticamente:
 
@@ -38,27 +35,19 @@ php artisan buysystem:refresh-unit-token
 ```
 
 Este comando:
-- ✅ Busca um novo token da API BuySystem
-- ✅ Atualiza automaticamente o `.env`
-- ✅ Limpa o cache de configuração
+- valida `gerar-token-init`
+- valida `auth/ativar`
+- atualiza variáveis de configuração no `.env`
+- limpa cache de configuração
 
-### 3. Renovação via API Endpoint
+Ele **não sobrescreve** `BUYSYSTEM_UNIT_TOKEN`; o fluxo principal continua sendo `gerar-token-init` + `auth/ativar`.
 
-Você também pode renovar via API (útil para scripts):
+O `BUYSYSTEM_UNIT_TOKEN` é usado apenas como fallback legado quando a API não retorna `refresh_token` no fluxo novo.
 
-```bash
-# Primeiro, obtenha o novo token
-$token = (Invoke-WebRequest -Method POST -Uri "https://api.buysystem.com.br/scripts/gerar_token_admin.php").Content
+### 3. Renovação automática (cron)
 
-# Depois, atualize via API
-Invoke-WebRequest -Method POST -Uri "http://127.0.0.1:8000/api/tokens/refresh-unit" -Body (@{unit_token=$token} | ConvertTo-Json) -ContentType "application/json"
-```
-
-**Nota:** Esta atualização é temporária (apenas na memória). Para persistir, atualize o `.env` manualmente.
-
-### 4. Renovação Automática (Cron Job)
-
-Para produção, configure um cron job que renove o token automaticamente a cada 9 minutos:
+O refresh de `access_token` acontece automaticamente no client.  
+Para manter configuração e validação periódica em produção, rode o comando a cada 15 minutos:
 
 **Windows (Task Scheduler):**
 1. Abra o Agendador de Tarefas
@@ -84,20 +73,22 @@ curl http://127.0.0.1:8000/api/tokens/test
 
 Ou abra no navegador: `http://127.0.0.1:8000/api/tokens/test`
 
-## 📝 Fluxo de Tokens
+## Fluxo de tokens
 
 ```
-UNIT Token (10 min) 
+Bootstrap Token (120 min)
     ↓
-Gera → Access Token (60 min) + Refresh Token (30 dias)
+Ativar unidade → Access Token (ex.: 2h) + Refresh Token
     ↓
-Access Token expira → Usa Refresh Token para renovar
+Access Token expira → usa /v2/auth/refresh
     ↓
-Refresh Token expira → Precisa de novo UNIT Token
+Refresh token falha/expira → novo ciclo gerar-token-init + ativar
 ```
 
-## 💡 Dicas
+## Dicas
 
-1. **Em desenvolvimento:** Use o comando `php artisan buysystem:refresh-unit-token` sempre que o token expirar
-2. **Em produção:** Configure o cron job para renovação automática
-3. **Monitoramento:** O endpoint `/api/tokens/test` mostra o status do token atual
+1. Em desenvolvimento, rode `php artisan buysystem:refresh-unit-token` após alterar credenciais.
+2. Em produção, deixe o cron + monitoramento de `/api/tokens/test`.
+3. Evite depender de `BUYSYSTEM_UNIT_TOKEN` para o fluxo novo.
+
+4. `BUYSYSTEM_UNIT_TOKEN` pode continuar configurado para fallback legado; o sistema tenta refresh automaticamente pelo `refresh_token` primeiro.

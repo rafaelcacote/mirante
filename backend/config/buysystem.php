@@ -5,6 +5,8 @@ return [
     'unit_token' => env('BUYSYSTEM_UNIT_TOKEN', ''),
     'token_type' => env('BUYSYSTEM_TOKEN_TYPE', 'site'),
     'pdv_id' => env('BUYSYSTEM_PDV_ID', ''),
+    'init_user_id' => (int) env('BUYSYSTEM_INIT_USER_ID', 1),
+    'init_minutes' => (int) env('BUYSYSTEM_INIT_MINUTES', 120),
     'access_minutes' => (int) env('BUYSYSTEM_ACCESS_MINUTES', 60),
     'refresh_days' => (int) env('BUYSYSTEM_REFRESH_DAYS', 30),
     'token_description' => env('BUYSYSTEM_TOKEN_DESCRIPTION', 'WEB ADMIN'),

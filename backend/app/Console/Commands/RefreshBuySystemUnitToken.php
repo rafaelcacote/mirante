@@ -10,93 +10,128 @@ class RefreshBuySystemUnitToken extends Command
 {
     protected $signature = 'buysystem:refresh-unit-token';
 
-    protected $description = 'Renova o BUYSYSTEM_UNIT_TOKEN chamando a API da BuySystem e atualiza o .env';
+    protected $description = 'Valida fluxo BuySystem (gerar-token-init + ativar) e atualiza config de init no .env';
 
     public function handle(): int
     {
-        $this->info('🔄 Buscando novo UNIT token da BuySystem...');
+        $this->info('Atualizando configuracao do fluxo BuySystem (init + ativar)...');
 
         try {
-            // SSL: usa cacert.pem do WAMP no Windows se disponível
             $certPath = 'C:\\wamp64\\bin\\php\\php8.3.14\\extras\\ssl\\cacert.pem';
             $sslOptions = file_exists($certPath) ? ['verify' => $certPath] : ['verify' => true];
 
-            $response = Http::timeout(30)
+            $tokenType = (string) config('buysystem.token_type', 'site');
+            $pdvId = (int) config('buysystem.pdv_id', 0);
+            $userId = (int) config('buysystem.init_user_id', 0);
+            $minutes = (int) config('buysystem.init_minutes', 120);
+
+            if ($pdvId <= 0 || $userId <= 0 || $minutes <= 0) {
+                $this->error('Configuracao invalida. Defina BUYSYSTEM_PDV_ID, BUYSYSTEM_INIT_USER_ID e BUYSYSTEM_INIT_MINUTES no .env');
+                return self::FAILURE;
+            }
+
+            $initResponse = Http::timeout(30)
                 ->withOptions($sslOptions)
-                ->post('https://api.buysystem.com.br/scripts/gerar_token_admin.php');
+                ->acceptJson()
+                ->post('https://api.buysystem.com.br/scripts/gerar-token-init', [
+                    'bs_tipo' => $tokenType,
+                    'pdv_id' => $pdvId,
+                    'user_id' => $userId,
+                    'minutes' => $minutes,
+                ]);
 
-            if (! $response->successful()) {
-                $this->error('❌ Erro ao buscar token: HTTP '.$response->status());
-                $this->error('Resposta: '.$response->body());
-
+            if (! $initResponse->successful()) {
+                $this->error('Falha ao gerar bootstrap_token: HTTP '.$initResponse->status());
+                $this->error('Resposta: '.$initResponse->body());
                 return self::FAILURE;
             }
 
-            // Remove BOM (\xEF\xBB\xBF) que a API pode enviar antes do JSON
-            $body = ltrim(trim($response->body()), "\xEF\xBB\xBF");
-
-            if (empty($body)) {
-                $this->error('❌ Resposta vazia retornada pela API');
-
+            $initJson = json_decode(ltrim($initResponse->body(), "\xEF\xBB\xBF"), true);
+            $bootstrapToken = (string) ($initJson['data']['bootstrap_token'] ?? '');
+            if ($bootstrapToken === '') {
+                $this->error('Resposta sem bootstrap_token no endpoint gerar-token-init');
                 return self::FAILURE;
             }
 
-            // A API retorna JSON: {"success":true,"data":{"bootstrap_token":"bs_init_...","expires_in_minutes":10}}
-            $decoded = json_decode($body, true);
-            if (json_last_error() === JSON_ERROR_NONE && isset($decoded['data']['bootstrap_token'])) {
-                $newToken = trim((string) $decoded['data']['bootstrap_token']);
-            } else {
-                // Fallback: resposta é o token puro (formato antigo)
-                $newToken = $body;
+            $baseUrl = rtrim((string) config('buysystem.base_url', 'https://api.buysystem.com.br'), '/');
+            $hasV2Prefix = str_ends_with($baseUrl, '/v2');
+            $activationCandidates = $hasV2Prefix
+                ? [$baseUrl.'/auth/ativar']
+                : [$baseUrl.'/auth/ativar', $baseUrl.'/v2/auth/ativar'];
+
+            $activateResponse = null;
+            $lastError = null;
+            foreach ($activationCandidates as $activationUrl) {
+                try {
+                    $activateResponse = Http::timeout(30)
+                        ->withOptions($sslOptions)
+                        ->acceptJson()
+                        ->withToken($bootstrapToken)
+                        ->post($activationUrl, []);
+                    if ($activateResponse->successful()) {
+                        $lastError = null;
+                        break;
+                    }
+                } catch (\Throwable $e) {
+                    $lastError = $e;
+                }
             }
 
-            if (empty($newToken) || str_starts_with($newToken, '{')) {
-                $this->error('❌ Não foi possível extrair o token da resposta da API');
-                $this->error('Resposta: '.$body);
-
+            if (! $activateResponse || ! $activateResponse->successful()) {
+                if ($lastError instanceof \Throwable) {
+                    $this->error('Erro ao ativar unidade: '.$lastError->getMessage());
+                }
+                $this->error('Falha ao ativar unidade: HTTP '.$activateResponse->status());
+                $this->error('Resposta: '.$activateResponse->body());
                 return self::FAILURE;
             }
 
-            $this->info('✅ Novo UNIT token: '.substr($newToken, 0, 30).'...');
-
-            // Atualiza o .env — usa regex multiline para cobrir valores que se espalharam por mais de 1 linha
             $envPath = base_path('.env');
             if (! File::exists($envPath)) {
-                $this->error('❌ Arquivo .env não encontrado em: '.$envPath);
-
+                $this->error('Arquivo .env nao encontrado em: '.$envPath);
                 return self::FAILURE;
             }
 
-            // Remove BOM do .env se houver
             $envContent = ltrim(File::get($envPath), "\xEF\xBB\xBF");
-
-            // Regex que captura a chave + tudo até a próxima linha que começa com letra maiúscula ou fim do arquivo
-            if (preg_match('/^BUYSYSTEM_UNIT_TOKEN=/m', $envContent)) {
-                // Remove a linha antiga (pode ser multiline por causa de JSON com quebras)
-                $envContent = preg_replace('/^BUYSYSTEM_UNIT_TOKEN=.*/m', "BUYSYSTEM_UNIT_TOKEN={$newToken}", $envContent);
-            } else {
-                $envContent .= "\nBUYSYSTEM_UNIT_TOKEN={$newToken}\n";
-            }
+            $envContent = $this->upsertEnv($envContent, 'BUYSYSTEM_BASE_URL', $baseUrl);
+            $envContent = $this->upsertEnv($envContent, 'BUYSYSTEM_TOKEN_TYPE', $tokenType);
+            $envContent = $this->upsertEnv($envContent, 'BUYSYSTEM_PDV_ID', (string) $pdvId);
+            $envContent = $this->upsertEnv($envContent, 'BUYSYSTEM_INIT_USER_ID', (string) $userId);
+            $envContent = $this->upsertEnv($envContent, 'BUYSYSTEM_INIT_MINUTES', (string) $minutes);
 
             File::put($envPath, $envContent);
 
-            // Limpa o cache de config para o Laravel recarregar o .env
             \Illuminate\Support\Facades\Artisan::call('config:clear');
 
-            $this->info('✅ Token salvo no .env com sucesso!');
-            $this->warn('⚠️  O token UNIT expira em 10 minutos. Configure renovação automática.');
-            $this->line('');
-            $this->line('💡 Para renovar automaticamente a cada 9 minutos no Windows:');
-            $this->line('   Agendador de Tarefas → a cada 9 min → php artisan buysystem:refresh-unit-token');
+            $activateJson = json_decode(ltrim($activateResponse->body(), "\xEF\xBB\xBF"), true);
+            $accessToken = (string) ($activateJson['data']['access_token'] ?? '');
+            $expiresInHours = (int) ($activateJson['data']['expires_in_hours'] ?? 0);
+
+            $this->info('Fluxo validado com sucesso.');
+            $this->line('bootstrap_token: '.substr($bootstrapToken, 0, 25).'...');
+            $this->line('access_token: '.($accessToken !== '' ? substr($accessToken, 0, 25).'...' : 'nao retornado'));
+            if ($expiresInHours > 0) {
+                $this->line('access_token expira em aprox. '.$expiresInHours.' hora(s)');
+            }
 
             return self::SUCCESS;
         } catch (\Throwable $e) {
-            $this->error('❌ Erro ao renovar token: '.$e->getMessage());
+            $this->error('Erro ao atualizar fluxo BuySystem: '.$e->getMessage());
             if ($this->option('verbose')) {
                 $this->error($e->getTraceAsString());
             }
 
             return self::FAILURE;
         }
+    }
+
+    private function upsertEnv(string $content, string $key, string $value): string
+    {
+        $line = $key.'='.$value;
+        if (preg_match('/^'.preg_quote($key, '/').'=.*/m', $content)) {
+            return (string) preg_replace('/^'.preg_quote($key, '/').'=.*/m', $line, $content);
+        }
+
+        return rtrim($content).PHP_EOL.$line.PHP_EOL;
     }
 }
