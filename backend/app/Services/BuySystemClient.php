@@ -208,7 +208,7 @@ class BuySystemClient
                 }
             }
 
-            if (! isset($response) || ! is_array($response)) {
+            if (! isset($response)) {
                 throw $lastError ?? new RuntimeException('Falha ao ativar unidade (auth/ativar)');
             }
 
