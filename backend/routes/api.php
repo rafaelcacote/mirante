@@ -1,9 +1,15 @@
 <?php
 
+use App\Http\Controllers\BoavistaNoticiasProxyController;
 use App\Http\Controllers\BuySystemProxyController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('api.cors')->group(function (): void {
+
+    // -------------------------------------------------------------------------
+    // Notícias Prefeitura Boa Vista (proxy público)
+    // -------------------------------------------------------------------------
+    Route::get('/boavista/noticias', BoavistaNoticiasProxyController::class);
 
     // -------------------------------------------------------------------------
     // 03 - Catálogo (V2)

@@ -150,6 +150,13 @@ watch(tickets, (list) => {
   }
   ticketQuantities.value = next
 })
+
+/** Só campos de local/endereço do payload da API (sem cidade fictícia do mapEvent). */
+const eventLocationFromApi = computed(() => {
+  const raw = event.value?.raw
+  if (!raw) return ''
+  return String(raw.local || raw.localizacao || raw.location || raw.endereco || '').trim()
+})
 </script>
 
 <template>
@@ -207,7 +214,9 @@ watch(tickets, (list) => {
                   </div>
                   <div>
                     <p class="text-xs text-gray-600">Local</p>
-                    <p class="font-semibold text-[#0F3460]">{{ event.location }}</p>
+                    <p class="font-semibold text-[#0F3460]">
+                      {{ eventLocationFromApi || '—' }}
+                    </p>
                   </div>
                 </div>
                 <div class="flex items-center gap-3">

@@ -545,6 +545,7 @@ function badgeForEvent(raw) {
 function mapEvent(raw) {
   const cityUf = [raw.cidade, raw.uf].filter(Boolean).join(' - ')
   const location = raw.local || raw.localizacao || raw.location || cityUf || 'Boa Vista, RR'
+  const local = String(raw.local ?? '').trim()
 
   return {
     id: raw.evento_id || raw.id || raw.codigo || raw.slug || Date.now(),
@@ -553,6 +554,8 @@ function mapEvent(raw) {
     date: formatDate(raw.data_inicio || raw.data || raw.data_evento || raw.date),
     time: formatTime(raw.hora_inicio || raw.hora || raw.horario || raw.time),
     location,
+    /** Nome do local exatamente como vem em `local` na API (ex.: venue). */
+    local,
     capacity: Number(raw.capacidade || raw.total_vagas || raw.capacity || 100),
     available: Number(raw.disponivel || raw.vagas_disponiveis || raw.available || 0),
     price: Number(raw.preco || raw.valor || raw.price || 0),
@@ -949,6 +952,10 @@ export const apidogService = {
 
   async checkin(codigo) {
     return authorizedPost(ENDPOINTS.TICKETS.CHECKIN, { codigo })
+  },
+
+  async fazerCheckin(codigo) {
+    return this.checkin(codigo)
   },
 
   /** @deprecated Use listarTickets() */

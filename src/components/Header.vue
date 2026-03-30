@@ -35,24 +35,22 @@ const searchQuery = ref('')
           </div>
         </div>
 
-        <div
-          class="hidden sm:flex items-center gap-2 bg-white/10 px-3 py-2 rounded-lg text-white hover:bg-white/20 transition-colors cursor-pointer"
-        >
-          <MapPin class="w-4 h-4" />
-          <span class="text-sm font-medium">Boa Vista</span>
-        </div>
+        <div class="flex items-center gap-3 lg:gap-4 shrink-0">
+          <div
+            class="hidden sm:flex items-center gap-2 bg-white/10 px-3 py-2 rounded-lg text-white hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            <MapPin class="w-4 h-4" />
+            <span class="text-sm font-medium">Boa Vista</span>
+          </div>
 
-        <nav class="hidden lg:flex items-center gap-6 text-white">
-          <RouterLink to="/o-mirante" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">
-            O Mirante
-          </RouterLink>
-          <RouterLink to="/meus-ingressos" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">
-            Meus Ingressos
-          </RouterLink>
-          <a href="https://boavista.rr.gov.br/visita360/index.htm" target="_blank" rel="noopener noreferrer" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">Visão 360º</a>
-          <a href="#" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">Criar Evento</a>
-          <Button class="bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold">Entrar</Button>
-        </nav>
+          <nav class="hidden lg:flex items-center gap-6 text-white">
+            <RouterLink to="/o-mirante" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">
+              O Mirante
+            </RouterLink>
+            <a href="https://boavista.rr.gov.br/visita360/index.htm" target="_blank" rel="noopener noreferrer" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">Visão 360º</a>
+            <Button class="bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold">Entrar</Button>
+          </nav>
+        </div>
 
         <button
           class="lg:hidden text-white p-2 hover:bg-white/10 rounded-lg transition-colors"
@@ -85,18 +83,8 @@ const searchQuery = ref('')
         >
           O Mirante
         </RouterLink>
-        <RouterLink
-          to="/meus-ingressos"
-          class="block text-white text-sm font-medium py-2 hover:text-[#D4AF37] transition-colors"
-          @click="mobileMenuOpen = false"
-        >
-          Meus Ingressos
-        </RouterLink>
         <a href="https://boavista.rr.gov.br/visita360/index.htm" target="_blank" rel="noopener noreferrer" class="block text-white text-sm font-medium py-2 hover:text-[#D4AF37] transition-colors" @click="mobileMenuOpen = false">
           Visão 360º
-        </a>
-        <a href="#" class="block text-white text-sm font-medium py-2 hover:text-[#D4AF37] transition-colors">
-          Criar Evento
         </a>
         <Button class="w-full bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold">Entrar</Button>
       </div>

@@ -15,6 +15,9 @@ const confirmationCode = computed(() => route.query.codigo || route.query.code |
 const eventName = computed(() => route.query.evento || 'Visita ao Mirante Edileusa Lóz')
 const eventDate = computed(() => route.query.data || 'Data informada no ingresso')
 const eventTime = computed(() => route.query.horario || '')
+
+/** `local` do evento na API, repassado na query após o checkout. */
+const eventLocalVenue = computed(() => String(route.query.local || '').trim())
 const quantity = computed(() => Number(route.query.quantidade) || 1)
 const customerEmail = computed(() => route.query.email || '')
 
@@ -101,8 +104,7 @@ const goToMyTickets = () => router.push('/meus-ingressos')
                     </div>
                     <div>
                       <p class="text-xs text-gray-500 mb-0.5">Local</p>
-                      <p class="font-semibold text-[#0F3460]">Mirante Edileusa Lóz</p>
-                      <p class="text-xs text-gray-500">Boa Vista, RR</p>
+                      <p class="font-semibold text-[#0F3460]">{{ eventLocalVenue || '—' }}</p>
                     </div>
                   </div>
 

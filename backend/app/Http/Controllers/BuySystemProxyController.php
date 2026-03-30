@@ -144,10 +144,20 @@ class BuySystemProxyController extends Controller
 
     public function buscarClientes(Request $request): JsonResponse
     {
+        $cpf   = $request->query('cpf')   ? preg_replace('/\D+/', '', (string) $request->query('cpf'))   : null;
+        $email = $request->query('email') ? trim((string) $request->query('email')) : null;
+        $nome  = $request->query('nome')  ? trim((string) $request->query('nome'))  : null;
+
+        // Termo genérico de busca — a API BuySystem pode exigir `q` ou `busca`
+        // em vez de (ou além de) `cpf` e `email` separados.
+        $searchTerm = $cpf ?: $email ?: $nome;
+
         $query = array_filter([
-            'cpf'   => $request->query('cpf'),
-            'email' => $request->query('email'),
-            'nome'  => $request->query('nome'),
+            'cpf'   => $cpf,
+            'email' => $email,
+            'nome'  => $nome,
+            'q'     => $searchTerm,
+            'busca' => $searchTerm,
         ]);
 
         $suffix = $query !== [] ? '?'.http_build_query($query) : '';
@@ -160,21 +170,29 @@ class BuySystemProxyController extends Controller
             'nome'            => 'required|string',
             'email'           => 'required|email',
             'cpf'             => 'required|string',
-            'cep'             => 'required|string',
-            'numero'          => 'required|string',
-            'complemento'     => 'required|string',
-            'data_nascimento' => 'required|string',
+            'telefone'        => 'nullable|string',
+            'cep'             => 'nullable|string',
+            'numero'          => 'nullable|string',
+            'complemento'     => 'nullable|string',
+            'data_nascimento' => 'nullable|string',
         ]);
 
-        return $this->handle(fn () => $this->client->post('/clientes', [
+        $payload = array_filter([
             'nome'            => $request->input('nome'),
             'email'           => $request->input('email'),
             'cpf'             => preg_replace('/\D+/', '', (string) $request->input('cpf')),
-            'cep'             => preg_replace('/\D+/', '', (string) $request->input('cep')),
-            'numero'          => $request->input('numero'),
-            'complemento'     => $request->input('complemento'),
-            'data_nascimento' => $request->input('data_nascimento'),
-        ]), 201);
+            'telefone'        => $request->filled('telefone')
+                                    ? preg_replace('/\D+/', '', (string) $request->input('telefone'))
+                                    : null,
+            'cep'             => $request->filled('cep')
+                                    ? preg_replace('/\D+/', '', (string) $request->input('cep'))
+                                    : null,
+            'numero'          => $request->filled('numero') ? $request->input('numero') : null,
+            'complemento'     => $request->filled('complemento') ? $request->input('complemento') : null,
+            'data_nascimento' => $request->filled('data_nascimento') ? $request->input('data_nascimento') : null,
+        ], fn ($v) => $v !== null);
+
+        return $this->handle(fn () => $this->client->post('/clientes', $payload), 201);
     }
 
     // =========================================================================

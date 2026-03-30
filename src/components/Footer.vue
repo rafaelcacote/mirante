@@ -31,11 +31,6 @@ import { Facebook, Instagram, Mail, MapPin, Phone, Twitter } from 'lucide-vue-ne
               <RouterLink to="/" class="text-gray-300 hover:text-[#D4AF37] transition-colors">Início</RouterLink>
             </li>
             <li><a href="#" class="text-gray-300 hover:text-[#D4AF37] transition-colors">Eventos</a></li>
-            <li>
-              <RouterLink to="/meus-ingressos" class="text-gray-300 hover:text-[#D4AF37] transition-colors">
-                Meus Ingressos
-              </RouterLink>
-            </li>
             <li><a href="#" class="text-gray-300 hover:text-[#D4AF37] transition-colors">Sobre</a></li>
           </ul>
         </div>
