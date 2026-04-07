@@ -1,12 +1,19 @@
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { MapPin, Menu, Search, X } from 'lucide-vue-next'
 
 import Button from '@/components/ui/Button.vue'
 import logoMirante from '@/assets/images/logo-colorido.png'
 
+const router = useRouter()
 const mobileMenuOpen = ref(false)
 const searchQuery = ref('')
+
+function goEntrar() {
+  mobileMenuOpen.value = false
+  router.push({ name: 'cliente-entrar' })
+}
 </script>
 
 <template>
@@ -48,7 +55,13 @@ const searchQuery = ref('')
               O Mirante
             </RouterLink>
             <a href="https://boavista.rr.gov.br/visita360/index.htm" target="_blank" rel="noopener noreferrer" class="text-sm font-medium hover:text-[#D4AF37] transition-colors">Visão 360º</a>
-            <Button class="bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold">Entrar</Button>
+            <Button
+              type="button"
+              class="bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold"
+              @click="goEntrar"
+            >
+              Entrar
+            </Button>
           </nav>
         </div>
 
@@ -86,7 +99,13 @@ const searchQuery = ref('')
         <a href="https://boavista.rr.gov.br/visita360/index.htm" target="_blank" rel="noopener noreferrer" class="block text-white text-sm font-medium py-2 hover:text-[#D4AF37] transition-colors" @click="mobileMenuOpen = false">
           Visão 360º
         </a>
-        <Button class="w-full bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold">Entrar</Button>
+        <Button
+          type="button"
+          class="w-full bg-[#D4AF37] text-[#0F3460] hover:bg-white font-semibold"
+          @click="goEntrar"
+        >
+          Entrar
+        </Button>
       </div>
     </div>
   </header>

@@ -142,6 +142,19 @@ class BuySystemProxyController extends Controller
     // 04 - CLIENTES
     // =========================================================================
 
+    public function loginCliente(Request $request): JsonResponse
+    {
+        $request->validate([
+            'login' => 'required|string',
+            'senha' => 'required|string',
+        ]);
+
+        return $this->handle(fn () => $this->client->post('/clientes/login', [
+            'login' => $request->input('login'),
+            'senha' => $request->input('senha'),
+        ]));
+    }
+
     public function buscarClientes(Request $request): JsonResponse
     {
         $cpf   = $request->query('cpf')   ? preg_replace('/\D+/', '', (string) $request->query('cpf'))   : null;
@@ -170,6 +183,7 @@ class BuySystemProxyController extends Controller
             'nome'            => 'required|string',
             'email'           => 'required|email',
             'cpf'             => 'required|string',
+            'senha'           => 'nullable|string|min:6',
             'telefone'        => 'nullable|string',
             'cep'             => 'nullable|string',
             'numero'          => 'nullable|string',
@@ -181,6 +195,7 @@ class BuySystemProxyController extends Controller
             'nome'            => $request->input('nome'),
             'email'           => $request->input('email'),
             'cpf'             => preg_replace('/\D+/', '', (string) $request->input('cpf')),
+            'senha'           => $request->filled('senha') ? $request->input('senha') : null,
             'telefone'        => $request->filled('telefone')
                                     ? preg_replace('/\D+/', '', (string) $request->input('telefone'))
                                     : null,

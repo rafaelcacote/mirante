@@ -771,6 +771,59 @@ function clearOperatorSession() {
   sessionStorage.removeItem(OPERATOR_SESSION_KEY)
 }
 
+// ============================================================================
+// CLIENTE (visitante) — sessão após login em /clientes/login
+// ============================================================================
+
+const CLIENTE_SESSION_KEY = 'mirante_cliente_session'
+
+function getClienteSession() {
+  return sessionStorage.getItem(CLIENTE_SESSION_KEY) || null
+}
+
+function setClienteSession(session) {
+  if (session) {
+    sessionStorage.setItem(CLIENTE_SESSION_KEY, session)
+  } else {
+    sessionStorage.removeItem(CLIENTE_SESSION_KEY)
+  }
+}
+
+function clearClienteSession() {
+  sessionStorage.removeItem(CLIENTE_SESSION_KEY)
+}
+
+function persistClienteAfterLogin(response, login) {
+  const root = response?.data ?? response
+  const session =
+    root?.cliente_session ??
+    root?.client_session ??
+    root?.session ??
+    root?.token ??
+    root?.access_token ??
+    null
+  if (session) setClienteSession(String(session))
+
+  const cliente = root?.cliente ?? root?.user ?? null
+  const email =
+    (cliente && cliente.email) ||
+    (typeof login === 'string' && login.includes('@') ? String(login).trim() : '') ||
+    ''
+  const cpf = cliente?.cpf ? String(cliente.cpf).replace(/\D/g, '') : ''
+  const id = cliente?.id ?? cliente?.cliente_id
+
+  if (email || cpf || (typeof login === 'string' && login.trim())) {
+    localStorage.setItem(
+      'mirante_last_customer',
+      JSON.stringify({
+        email: email || (typeof login === 'string' ? login.trim() : ''),
+        cpf,
+        ...(id != null && id !== '' ? { id } : {}),
+      }),
+    )
+  }
+}
+
 /**
  * Faz uma requisição autenticada com o header X-Operator-Session
  */
@@ -879,6 +932,23 @@ export const apidogService = {
   // 04 - CLIENTES
   // ==========================================================================
 
+  async loginCliente(login, senha) {
+    const response = await authorizedPost(ENDPOINTS.CLIENTES.LOGIN, { login, senha })
+    persistClienteAfterLogin(response, login)
+    return response
+  },
+
+  logoutCliente() {
+    clearClienteSession()
+    localStorage.removeItem('mirante_last_customer')
+  },
+
+  isClienteLogado() {
+    return Boolean(getClienteSession())
+  },
+
+  getClienteSession,
+
   async buscarClientes(filters = {}) {
     const query = new URLSearchParams()
     if (filters?.cpf)   query.set('cpf', String(filters.cpf).replace(/\D/g, ''))
@@ -898,6 +968,10 @@ export const apidogService = {
       numero:          dados.numero,
       complemento:     dados.complemento,
       data_nascimento: dados.data_nascimento,
+      ...(dados.senha ? { senha: dados.senha } : {}),
+      ...(dados.telefone
+        ? { telefone: String(dados.telefone).replace(/\D/g, '') }
+        : {}),
     })
   },
 

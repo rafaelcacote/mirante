@@ -12,6 +12,7 @@ import CompraConfirmada from '@/pages/CompraConfirmada.vue'
 import CheckIn from '@/pages/CheckIn.vue'
 import OperadorLogin from '@/pages/OperadorLogin.vue'
 import OperadorDashboard from '@/pages/OperadorDashboard.vue'
+import ClienteEntrar from '@/pages/ClienteEntrar.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -28,6 +29,7 @@ const router = createRouter({
     { path: '/checkout', name: 'checkout', component: Checkout },
     { path: '/meus-ingressos', name: 'my-tickets', component: MyTickets },
     { path: '/compra-confirmada', name: 'compra-confirmada', component: CompraConfirmada },
+    { path: '/entrar', name: 'cliente-entrar', component: ClienteEntrar },
 
     // Operadores
     { path: '/checkin', name: 'checkin', component: CheckIn },

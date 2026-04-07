@@ -5,7 +5,7 @@
  * para facilitar imports diretos nos componentes Vue.
  *
  * Uso:
- *   import { buscarClientes, cadastrarCliente } from '@/api/services/clientes.js'
+ *   import { buscarClientes, cadastrarCliente, loginCliente } from '@/api/services/clientes.js'
  */
 
 import { apidogService } from './apidog.js'
@@ -16,7 +16,11 @@ export const buscarClientes = (filters) =>
 export const cadastrarCliente = (dados) =>
   apidogService.cadastrarCliente(dados)
 
+export const loginCliente = (login, senha) =>
+  apidogService.loginCliente(login, senha)
+
 export default {
   buscarClientes,
   cadastrarCliente,
+  loginCliente,
 }

@@ -37,6 +37,7 @@ const ENDPOINTS = {
   // -------------------------------------------------------------------------
   CLIENTES: {
     BUSCAR: '/clientes',
+    LOGIN: '/clientes/login',
     CADASTRAR: '/clientes',
   },
 

@@ -32,6 +32,7 @@ Route::middleware('api.cors')->group(function (): void {
     // 04 - Clientes
     // -------------------------------------------------------------------------
     Route::get('/clientes', [BuySystemProxyController::class, 'buscarClientes']);
+    Route::post('/clientes/login', [BuySystemProxyController::class, 'loginCliente']);
     Route::post('/clientes', [BuySystemProxyController::class, 'cadastrarCliente']);
 
     // -------------------------------------------------------------------------
